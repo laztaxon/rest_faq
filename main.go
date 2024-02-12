@@ -16,261 +16,200 @@ import (
 	"gorm.io/gorm"
 )
 
-// FAQ model
+// FAQ model represents an FAQ with a question, answer, and associated tags.
 type FAQ struct {
 	gorm.Model
-	ID       int    `json:"id" gorm:"primary_key"`
 	Question string `json:"question"`
 	Answer   string `json:"answer"`
 	Tags     []*Tag `gorm:"many2many:faq_tags;"`
 }
 
-// Tag model
+// Tag model represents a tag with a name and category that can be associated with FAQs.
 type Tag struct {
 	gorm.Model
-	ID       int    `json:"id" gorm:"primary_key"`
-	Tag_Name string `json:"tag_name"`
+	TagName  string `json:"tag_name"`
 	Category string `json:"category"`
 	FAQs     []*FAQ `gorm:"many2many:faq_tags;"`
 }
 
-// DB connection
-var db *gorm.DB
-var err error
-
-// Create a new FAQ
-func createFAQ(c *gin.Context) {
-	var newFAQ FAQ
-	if err := c.ShouldBindJSON(&newFAQ); err != nil {
-		log.Printf("Error when binding JSON: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Binding JSON error"})
-		return
-	}
-
-	//Save the new FAQ
-	result := db.Create(&newFAQ)
-	if result.Error != nil {
-		log.Printf("Error when saving new FAQ: %v", result.Error)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save new FAQ."})
-		return
-	}
-
-	c.JSON(http.StatusCreated, newFAQ)
-}
-
-// PreloadFAQs loads all FAQs with their associated tags
-func PreloadFAQs(c *gin.Context) {
-	var faqs []FAQ
-	// Fetch FAQs with preloaded tags
-	if result := db.Preload("Tags").Find(&faqs); result.Error != nil {
-		log.Printf("Error when fetching FAQs: %v", result.Error)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch FAQs"})
-		return
-	}
-	c.JSON(http.StatusOK, faqs)
-}
-
-// ReadFAQ retrieves the FAQ record with the given ID from the database and returns it as a JSON response.
-func ReadFAQ(c *gin.Context) {
-	var faq FAQ
-	id := c.Param("id")
-
-	// Fetch the FAQ with preloaded tags
-	err := db.Preload("Tags").First(&faq, id).Error
+// initDB initializes the database connection and migrates the schema.
+func initDB() (*gorm.DB, error) {
+	db, err := gorm.Open(sqlite.Open("faqs.db"), &gorm.Config{})
 	if err != nil {
-		log.Printf("Error when fetching FAQ: %v", err)
-		c.JSON(http.StatusNotFound, gin.H{"error": "Record not found!"})
-		return
+		return nil, err
 	}
 
-	c.JSON(http.StatusOK, faq)
+	if err := db.AutoMigrate(&FAQ{}, &Tag{}); err != nil {
+		return nil, err
+	}
+
+	return db, nil
 }
 
-// UpdateFAQ updates a FAQ record in the database based on the provided ID.
-// It retrieves the FAQ record with the given ID from the database, binds the JSON data from the request to the FAQ struct,
-// and saves the updated FAQ record back to the database. Finally, it returns the updated FAQ record as a JSON response.
-func UpdateFAQ(c *gin.Context) {
-	var faq FAQ
-	id := c.Param("id")
-	err := db.First(&faq, id).Error
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Record not found!"})
-		return
+// createFAQHandler handles the creation of a new FAQ.
+func createFAQHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var newFAQ FAQ
+		if err := c.ShouldBindJSON(&newFAQ); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+			return
+		}
+
+		if err := db.Create(&newFAQ).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create FAQ"})
+			return
+		}
+
+		c.JSON(http.StatusCreated, newFAQ)
 	}
-	if err := c.ShouldBindJSON(&faq); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	db.Save(&faq)
-	c.JSON(http.StatusOK, faq)
 }
 
-// DeleteFAQ deletes a specific FAQ using ID
-func DeleteFAQ(c *gin.Context) {
-	var faq FAQ
-	id := c.Param("id")
-	err := db.First(&faq, id).Error
-	if err != nil {
-		log.Printf("Error when fetching FAQ: %v", err)
-		c.JSON(http.StatusNotFound, gin.H{"error": "Record not found!"})
-		return
+// preloadFAQsHandler preloads FAQs with their associated tags.
+func preloadFAQsHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var faqs []FAQ
+		if err := db.Preload("Tags").Find(&faqs).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch FAQs"})
+			return
+		}
+		c.JSON(http.StatusOK, faqs)
 	}
-
-	err = db.Delete(&faq).Error
-	if err != nil {
-		log.Printf("Error when deleting FAQ: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete FAQ"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"data": true})
 }
 
-// CreateTag creates a new tag.
-// It binds the JSON data from the request to the Tag struct,
-// creates the new tag record in the database, and returns the created tag as a JSON response.
-func createTag(c *gin.Context) {
-	var newTag Tag
-	if err := c.ShouldBindJSON(&newTag); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+// readFAQHandler retrieves a specific FAQ by ID.
+func readFAQHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var faq FAQ
+		id := c.Param("id")
+		if err := db.Preload("Tags").First(&faq, id).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Record not found"})
+			return
+		}
+		c.JSON(http.StatusOK, faq)
 	}
-
-	if err := db.Create(&newTag).Error; err != nil {
-		log.Printf("Error when creating tag: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create tag"})
-		return
-	}
-
-	c.JSON(http.StatusCreated, newTag)
 }
 
-// GetTags retrieves all tags from the database and returns them as a JSON response.
-func GetTags(c *gin.Context) {
-	var tags []Tag
-	if err := db.Find(&tags).Error; err != nil {
-		log.Printf("Error when fetching tags: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch tags"})
-		return
+// updateFAQHandler updates a specific FAQ by ID.
+func updateFAQHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var faq FAQ
+		id := c.Param("id")
+		if err := db.First(&faq, id).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Record not found"})
+			return
+		}
+		if err := c.ShouldBindJSON(&faq); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+			return
+		}
+		db.Save(&faq)
+		c.JSON(http.StatusOK, faq)
 	}
-
-	c.JSON(http.StatusOK, tags)
 }
 
-// UpdateTag updates a specific tag in the database based on the provided ID.
-// It retrieves the tag record with the given ID from the database, binds the JSON data from the request to the Tag struct,
-// and saves the updated tag record back to the database. Finally, it returns the updated tag as a JSON response.
-func UpdateTag(c *gin.Context) {
-	var tag Tag
-	id := c.Param("id")
-
-	// Retrieve the tag record from the database
-	err := db.First(&tag, id).Error
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Tag not found!"})
-		return
+// deleteFAQHandler deletes a specific FAQ by ID.
+func deleteFAQHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var faq FAQ
+		id := c.Param("id")
+		if err := db.First(&faq, id).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Record not found"})
+			return
+		}
+		db.Delete(&faq)
+		c.JSON(http.StatusOK, gin.H{"data": "FAQ deleted successfully"})
 	}
-
-	// Bind the JSON data from the request to the Tag struct
-	if err := c.ShouldBindJSON(&tag); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
-		return
-	}
-
-	// Save the updated tag record back to the database
-	if err := db.Save(&tag).Error; err != nil {
-		log.Printf("Error when updating tag: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update tag"})
-		return
-	}
-
-	c.JSON(http.StatusOK, tag)
 }
 
-// DeleteTag deletes a specific tag from the database based on the provided ID.
-// It retrieves the tag record with the given ID from the database and deletes it.
-// If the tag is not found, it returns a JSON response with an error message.
-// If the deletion is successful, it returns a JSON response with a success message.
-func DeleteTag(c *gin.Context) {
-	var tag Tag
-	id := c.Param("id")
-
-	// Retrieve the tag record from the database
-	err := db.First(&tag, id).Error
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Tag not found!"})
-		return
+// createTagHandler handles the creation of a new tag.
+func createTagHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var newTag Tag
+		if err := c.ShouldBindJSON(&newTag); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+			return
+		}
+		if err := db.Create(&newTag).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create tag"})
+			return
+		}
+		c.JSON(http.StatusCreated, newTag)
 	}
-
-	// Delete the tag record from the database
-	if err := db.Delete(&tag).Error; err != nil {
-		log.Printf("Error when deleting tag: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete tag"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"data": true})
 }
 
-// GetFAQsByTag retrieves all FAQs with a specific tag and returns them as a JSON response.
-func GetFAQsByTag(c *gin.Context) {
-	var faqs []FAQ
-	tag := c.Param("tag")
-
-	// Query the database for FAQs with the specified tag
-	err := db.Where("tags.tag_name = ?", tag).Find(&faqs).Error
-	if err != nil {
-		log.Printf("Error when querying FAQs by tag: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve FAQs by tag"})
-		return
+// getTagsHandler retrieves all tags.
+func getTagsHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var tags []Tag
+		if err := db.Find(&tags).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch tags"})
+			return
+		}
+		c.JSON(http.StatusOK, tags)
 	}
-
-	// Check if any FAQs were found
-	if len(faqs) == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "No FAQs found with the specified tag"})
-		return
-	}
-
-	c.JSON(http.StatusOK, faqs)
 }
 
-// main is the entry point of the application.
-func main() {
-	// Connect to the database
-	db, err = gorm.Open(sqlite.Open("faqs.db"), &gorm.Config{})
-	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+// updateTagHandler updates a specific tag by ID.
+func updateTagHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var tag Tag
+		id := c.Param("id")
+		if err := db.First(&tag, id).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Tag not found"})
+			return
+		}
+		if err := c.ShouldBindJSON(&tag); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+			return
+		}
+		db.Save(&tag)
+		c.JSON(http.StatusOK, tag)
 	}
+}
 
-	// Migrate the database schema
-	err = db.AutoMigrate(&FAQ{}, &Tag{})
-	if err != nil {
-		log.Fatalf("Failed to migrate database schema: %v", err)
+// deleteTagHandler deletes a specific tag by ID.
+func deleteTagHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var tag Tag
+		id := c.Param("id")
+		if err := db.First(&tag, id).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Tag not found"})
+			return
+		}
+		db.Delete(&tag)
+		c.JSON(http.StatusOK, gin.H{"data": "Tag deleted successfully"})
 	}
+}
 
-	// Setup Gin router
+// setupRouter initializes the Gin router and sets up the routes.
+func setupRouter(db *gorm.DB) *gin.Engine {
 	r := gin.Default()
-	r.Use(cors.Default()) // Apply CORS middleware
+	r.Use(cors.Default())
 
-	// Routes for FAQs
-	r.POST("/faqs", createFAQ)
-	r.GET("/faqs", PreloadFAQs)
-	r.GET("/faqs/:id", ReadFAQ)
-	r.PUT("/faqs/:id", UpdateFAQ)
-	r.DELETE("/faqs/:id", DeleteFAQ)
+	// FAQ routes
+	r.POST("/faqs", createFAQHandler(db))
+	r.GET("/faqs", preloadFAQsHandler(db))
+	r.GET("/faqs/:id", readFAQHandler(db))
+	r.PUT("/faqs/:id", updateFAQHandler(db))
+	r.DELETE("/faqs/:id", deleteFAQHandler(db))
 
-	// Routes for tags
-	r.POST("/tags", createTag)
-	r.GET("/tags", GetTags)
-	r.PUT("/tags/:id", UpdateTag)
-	r.DELETE("/tags/:id", DeleteTag)
+	// Tag routes
+	r.POST("/tags", createTagHandler(db))
+	r.GET("/tags", getTagsHandler(db))
+	r.PUT("/tags/:id", updateTagHandler(db))
+	r.DELETE("/tags/:id", deleteTagHandler(db))
 
-	// Routes for custom queries
-	r.GET("/faqs_by_tag/:tag", GetFAQsByTag)
+	return r
+}
 
-	// Start the server
-	err = r.Run(":8080")
+func main() {
+	db, err := initDB()
 	if err != nil {
+		log.Fatalf("Error initializing database: %v", err)
+	}
+
+	r := setupRouter(db)
+	if err := r.Run(":8080"); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }
